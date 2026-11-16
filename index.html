@@ -115,6 +115,9 @@ main{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px
 .sets{display:grid;grid-template-columns:34px 1fr 1fr 36px;gap:6px 8px;align-items:center}
 .sets .hd{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .setno{font-family:var(--display);font-size:20px;font-weight:600;text-align:center;color:var(--muted)}
+.wbox{display:flex;align-items:stretch;height:44px;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow:hidden;min-width:0}
+.sets .wbox input{border:0;border-radius:0;background:transparent;height:100%;flex:1;padding:0 2px 0 8px}
+.ubtn{flex:none;width:36px;font-size:12px;font-weight:700;color:var(--accent);border-left:1px solid var(--line);background:var(--surface)}
 .sets input{width:100%;min-width:0;height:44px;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:0 10px;
   font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;text-align:center}
 .sets input::placeholder{color:var(--muted);opacity:.55;font-weight:500}
@@ -225,7 +228,11 @@ const n = v => (v === null || v === undefined || v === "" || isNaN(v)) ? null : 
 const fw = v => v == null ? "–" : (Math.round(v * 10) / 10).toLocaleString();
 const uid = () => Math.random().toString(36).slice(2, 10);
 const validSets = sets => (sets || []).filter(s => n(s.reps) > 0);
-const setsText = sets => validSets(sets).map(s => n(s.weight) != null ? `${fw(s.weight)}×${s.reps}` : `${s.reps} reps`).join(" · ");
+/* each set carries its own unit ("lb" | "kg"); the header switch is the display unit for charts and stats */
+const LB_PER_KG = 2.20462;
+const unitOf = s => s && (s.unit === "kg" || s.unit === "lb") ? s.unit : unit;
+const toDisp = s => { const w = n(s.weight); if (w == null) return null; const u = unitOf(s); return u === unit ? w : u === "kg" ? w * LB_PER_KG : w / LB_PER_KG; };
+const setsText = sets => validSets(sets).map(s => n(s.weight) != null ? `${fw(s.weight)}${unitOf(s) !== unit ? " " + unitOf(s) : ""}×${s.reps}` : `${s.reps} reps`).join(" · ");
 const typeOf = s => s && s.type === "er" ? "er" : "reg";
 const ofType = (sets, t) => (sets || []).filter(s => typeOf(s) === t);
 const TYPES = { reg: "Regular", er: "ER" };
@@ -270,7 +277,7 @@ function metricsFor(sets) {
   const v = validSets(sets);
   let top = null, best = 0, vol = 0, reps = 0;
   for (const s of v) {
-    const w = n(s.weight) ?? 0, r = n(s.reps);
+    const w = toDisp(s) ?? 0, r = n(s.reps);
     if (top == null || w > top) top = w;
     best = Math.max(best, e1rm(w, r)); vol += w * r; reps = Math.max(reps, r);
   }
@@ -285,6 +292,11 @@ function loadAll() {
     const obj = raw ? JSON.parse(raw) : {};
     for (const k of Object.keys(days)) delete days[k];
     for (const [id, d] of Object.entries(obj)) days[id] = { date: id, exercises: [], ...d };
+    // sets saved before per-set units existed were entered in the app-wide unit: stamp it on once
+    let migrated = false;
+    for (const d of Object.values(days)) for (const e of d.exercises || []) for (const s of e.sets || [])
+      if (s.unit !== "lb" && s.unit !== "kg") { s.unit = unit; migrated = true; }
+    if (migrated) localStorage.setItem(STORE_KEY, JSON.stringify(days));
     ui.storageErr = false;
   } catch (e) { ui.storageErr = true; }
 }
@@ -310,7 +322,7 @@ function updateSaveLine() {
 
 /* ---------- top bar & tabs ---------- */
 function renderTop() {
-  const unitSw = `<div class="unit" role="group" aria-label="Weight unit">
+  const unitSw = `<div class="unit" role="group" aria-label="Unit for charts and new sets">
     <button data-action="unit" data-u="lb" aria-pressed="${unit==="lb"}">lb</button>
     <button data-action="unit" data-u="kg" aria-pressed="${unit==="kg"}">kg</button></div>`;
   let h;
@@ -391,15 +403,14 @@ function viewDay() {
       ${ui.armed === "ex"+ex.id ? `<div class="note">Tap the red button again to remove ${esc(ex.name)} from this workout.</div>` : ""}
       ${last ? `<div class="last"><span class="lt">Last time · ${esc(rel(last.date))}</span>${lastReg.length ? `<b class="num">${lastReg.length} set${lastReg.length===1?"":"s"}</b> · <span class="num">${esc(setsText(lastReg))}</span>` : ""}${lastEr.length ? `<span class="${lastReg.length ? "er-line" : ""}"><b>ER</b> · <span class="num">${esc(setsText(lastEr))}</span></span>` : ""}</div>`
              : `<div class="last first">First time logging this exercise.</div>`}
-      <div class="sets"><span class="hd">Set</span><span class="hd">Weight (${unit})</span><span class="hd">Reps</span><span></span>`;
+      <div class="sets"><span class="hd">Set</span><span class="hd">Weight</span><span class="hd">Reps</span><span></span>`;
     let ri = 0, ei = 0;
     ex.sets.forEach((s, j) => {
       const er = typeOf(s) === "er", ls = er ? lastEr[ei] : lastReg[ri], label = er ? "ER" : String(ri + 1);
       if (er) ei++; else ri++;
       h += `<span class="setno ${er ? "er" : ""}">${label}</span>
-        <input id="w-${ex.id}-${j}" inputmode="decimal" enterkeyhint="next" autocomplete="off" data-f="weight" data-i="${i}" data-j="${j}" aria-label="${er ? "ER set" : "Set " + label} weight" value="${s.weight ?? ""}" placeholder="${ls && n(ls.weight)!=null ? fw(ls.weight) : "0"}">
-        ${er ? `<div class="counter"><button data-action="er-dec" data-i="${i}" data-j="${j}" aria-label="One less rep">−</button><output class="num" aria-live="polite" aria-label="ER reps">${s.reps ?? 0}</output><button class="inc" data-action="er-inc" data-i="${i}" data-j="${j}" aria-label="Count a rep">+</button></div>`
-             : `<input id="r-${ex.id}-${j}" inputmode="numeric" enterkeyhint="done" autocomplete="off" data-f="reps" data-i="${i}" data-j="${j}" aria-label="Set ${label} reps" value="${s.reps ?? ""}" placeholder="${ls ? ls.reps : "0"}">`}
+        <div class="wbox"><input id="w-${ex.id}-${j}" inputmode="decimal" enterkeyhint="next" autocomplete="off" data-f="weight" data-i="${i}" data-j="${j}" aria-label="${er ? "ER set" : "Set " + label} weight in ${unitOf(s) === "kg" ? "kilograms" : "pounds"}" value="${s.weight ?? ""}" placeholder="${ls && n(ls.weight)!=null ? fw(ls.weight) : "0"}"><button class="ubtn" data-action="set-unit" data-i="${i}" data-j="${j}" aria-label="Switch ${er ? "ER set" : "set " + label} to ${unitOf(s) === "kg" ? "pounds" : "kilograms"}">${unitOf(s)}</button></div>
+        <input id="r-${ex.id}-${j}" inputmode="numeric" enterkeyhint="done" autocomplete="off" data-f="reps" data-i="${i}" data-j="${j}" aria-label="${er ? "ER set" : "Set " + label} reps" value="${s.reps ?? ""}" placeholder="${ls ? ls.reps : "0"}">
         <button class="icon-btn" data-action="del-set" data-i="${i}" data-j="${j}" aria-label="Remove ${er ? "ER set" : "set " + label}">${xIcon}</button>`;
     });
     h += `</div><div class="ex-actions"><button class="btn btn-ghost" data-action="add-set" data-i="${i}">+ Set</button>
@@ -577,8 +588,8 @@ function addExercise(name) {
   const ex = { id: uid(), name: name.trim(), sets: [] };
   // start with one set, weight carried over from last time's first set (an ER set if last time was ER only)
   const lastReg = validSets(ofType(last?.sets, "reg")), lastEr = validSets(ofType(last?.sets, "er"));
-  if (!lastReg.length && lastEr.length) ex.sets.push({ type: "er", weight: n(lastEr[0].weight), reps: 0 });
-  else ex.sets.push({ weight: lastReg[0] ? n(lastReg[0].weight) : null, reps: null });
+  if (!lastReg.length && lastEr.length) ex.sets.push({ type: "er", weight: n(lastEr[0].weight), unit: unitOf(lastEr[0]), reps: null });
+  else ex.sets.push({ weight: lastReg[0] ? n(lastReg[0].weight) : null, unit: lastReg[0] ? unitOf(lastReg[0]) : unit, reps: null });
   d.exercises.push(ex); touch(ui.dayId);
   ui.picker = false; ui.q = ""; render();
   setTimeout(() => { const el = document.getElementById(`r-${ex.id}-0`) ; el && el.scrollIntoView({ block: "center", behavior: "smooth" }); }, 30);
@@ -601,24 +612,24 @@ document.addEventListener("click", async ev => {
     case "add-set": case "add-er": {
       const type = a === "add-er" ? "er" : "reg", ex = d.exercises[+t.dataset.i], mine = ofType(ex.sets, type);
       const prev = mine[mine.length - 1], ls = validSets(lastTime(ex.name, ui.dayId, type)?.sets)[mine.length];
-      const set = { weight: prev ? n(prev.weight) : ls ? n(ls.weight) : null, reps: type === "er" ? 0 : null };
+      const set = { weight: prev ? n(prev.weight) : ls ? n(ls.weight) : null, unit: prev ? unitOf(prev) : ls ? unitOf(ls) : unit, reps: null };
       if (type === "er") set.type = "er";
       ex.sets.push(set);
       touch(ui.dayId); render();
-      document.getElementById(`${type === "er" ? "w" : "r"}-${ex.id}-${ex.sets.length-1}`)?.focus();
+      document.getElementById(`r-${ex.id}-${ex.sets.length-1}`)?.focus();
       break;
     }
-    case "er-inc": case "er-dec": {
+    case "set-unit": {
+      // relabels this set's weight (it doesn't convert the number you typed)
       const s = d.exercises[+t.dataset.i].sets[+t.dataset.j];
-      s.reps = Math.max(0, (n(s.reps) || 0) + (a === "er-inc" ? 1 : -1));
-      t.parentElement.querySelector("output").textContent = s.reps;   // update in place: no re-render while tapping fast
-      touch(ui.dayId); break;
+      s.unit = unitOf(s) === "lb" ? "kg" : "lb";
+      touch(ui.dayId); render(); break;
     }
     case "cat": d.category = d.category === t.dataset.c ? null : t.dataset.c; touch(ui.dayId); render(); break;
     case "stype": ui.stype = t.dataset.t; render(); break;
     case "copy-last": {
       const ex = d.exercises[+t.dataset.i], last = lastTime(ex.name, ui.dayId);
-      if (last) ex.sets = validSets(last.sets).map(s => typeOf(s) === "er" ? { type: "er", weight: n(s.weight), reps: n(s.reps) } : { weight: n(s.weight), reps: n(s.reps) });
+      if (last) ex.sets = validSets(last.sets).map(s => typeOf(s) === "er" ? { type: "er", weight: n(s.weight), unit: unitOf(s), reps: n(s.reps) } : { weight: n(s.weight), unit: unitOf(s), reps: n(s.reps) });
       touch(ui.dayId); render(); break;
     }
     case "del-set": d.exercises[+t.dataset.i].sets.splice(+t.dataset.j, 1); touch(ui.dayId); render(); break;
@@ -694,7 +705,7 @@ function parseCsv(text) {
   if (cell || row.length) { row.push(cell); rows.push(row); }
   const head = (rows.shift() || []).map(h => h.trim().toLowerCase());
   const col = name => head.indexOf(name);
-  const ci = { date: col("date"), cat: col("category"), ex: col("exercise"), set: col("set"), type: col("set_type"), w: col("weight"), r: col("reps") };
+  const ci = { date: col("date"), cat: col("category"), ex: col("exercise"), set: col("set"), type: col("set_type"), w: col("weight"), u: col("unit"), r: col("reps") };
   if (ci.date < 0 || ci.ex < 0) throw new Error("not a Lift Log CSV");
   const out = {};
   for (const r of rows) {
@@ -704,7 +715,8 @@ function parseCsv(text) {
     if (ci.cat >= 0 && r[ci.cat] && r[ci.cat].trim()) d.category = r[ci.cat].trim();
     let ex = d.exercises.find(e => key(e.name) === key(name));
     if (!ex) d.exercises.push(ex = { id: uid(), name, sets: [] });
-    const set = { weight: n((r[ci.w] || "").trim()), reps: n((r[ci.r] || "").trim()) };
+    const u = ci.u >= 0 ? (r[ci.u] || "").trim().toLowerCase() : "";
+    const set = { weight: n((r[ci.w] || "").trim()), unit: /^kgs?$/.test(u) ? "kg" : /^(lbs?|pounds?)$/.test(u) ? "lb" : unit, reps: n((r[ci.r] || "").trim()) };
     if (ci.type >= 0 && /^er$/i.test((r[ci.type] || "").trim())) set.type = "er";
     ex.sets.push(set);
   }
@@ -721,7 +733,7 @@ window.addEventListener("resize", () => { if (ui.view === "progress") drawChart(
 async function exportCsv() {
   const rows = [["date","category","exercise","set","set_type","weight","unit","reps"]];
   for (const id of Object.keys(days).sort()) for (const e of days[id].exercises || [])
-    e.sets.forEach((s, j) => rows.push([id, days[id].category || "", e.name, j + 1, TYPES[typeOf(s)], s.weight ?? "", unit, s.reps ?? ""]));
+    e.sets.forEach((s, j) => rows.push([id, days[id].category || "", e.name, j + 1, TYPES[typeOf(s)], s.weight ?? "", unitOf(s), s.reps ?? ""]));
   const csv = rows.map(r => r.map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(",")).join("\n");
   const name = `lift-log-${todayId()}.csv`, file = new File([csv], name, { type: "text/csv" });
   const done = () => { try { localStorage.setItem("liftlog.lastExport", String(Date.now())); } catch (e) {} render(); };
