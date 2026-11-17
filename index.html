@@ -112,6 +112,15 @@ main{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px
 .last b{font-weight:600}
 .last .lt{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;display:block;margin-bottom:2px}
 .last.first{background:transparent;border:1px dashed var(--line);color:var(--muted)}
+.notes{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:10px}
+.notes-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.notes-h .hd{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.notes textarea{width:100%;min-height:60px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);
+  padding:10px 12px;font-family:var(--body);font-size:16px;line-height:1.4;resize:none;overflow:hidden}
+.notes textarea::placeholder{color:var(--muted);opacity:.7}
+.linkbtn{color:var(--accent);font-weight:600;font-size:14px;padding:6px 0}
+.pn{align-items:flex-start}
+.pn-note{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0 2px}
 .sets{display:grid;grid-template-columns:34px 1fr 1fr 36px;gap:6px 8px;align-items:center}
 .sets .hd{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .setno{font-family:var(--display);font-size:20px;font-weight:600;text-align:center;color:var(--muted)}
@@ -198,7 +207,7 @@ main{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px
 const days = {};              // id (YYYY-MM-DD) -> {date, exercises:[{id,name,sets:[{weight,reps}]}], updatedAt}
 const dirty = new Set(), timers = {}, inflight = {}, again = {};
 const ui = { view: "home", dayId: null, ex: null, metric: "e1rm", loaded: false, slow: false, nodb: false, err: null,
-             picker: false, q: "", armed: null, saving: 0, stype: "reg" };
+             picker: false, q: "", armed: null, saving: 0, stype: "reg", notesFor: null };
 let unit = "lb";
 try { unit = localStorage.getItem("liftlog.unit") || "lb"; } catch (e) {}
 
@@ -395,7 +404,7 @@ function viewDay() {
     <div class="cats" role="group" aria-label="Workout type">${CATEGORIES.map(c => `<button data-action="cat" data-c="${esc(c)}" aria-pressed="${d.category === c}">${esc(c)}</button>`).join("")}</div>`;
   if (!d.exercises.length) h += `<div class="empty"><strong>No exercises yet</strong>Add your first exercise. You'll see what you lifted last time before you start.</div>`;
   d.exercises.forEach((ex, i) => {
-    const last = lastTime(ex.name, id);
+    const last = lastTime(ex.name, id), pastCount = pastNotes(ex.name, id).length;
     const lastReg = validSets(ofType(last?.sets, "reg")), lastEr = validSets(ofType(last?.sets, "er"));
     h += `<section class="ex" data-ex="${i}">
       <div class="ex-h"><h3>${esc(ex.name)}</h3>
@@ -416,7 +425,12 @@ function viewDay() {
     h += `</div><div class="ex-actions"><button class="btn btn-ghost" data-action="add-set" data-i="${i}">+ Set</button>
       <button class="btn btn-ghost" data-action="add-er" data-i="${i}">+ ER set</button>
       ${last && !validSets(ex.sets).length ? `<button class="btn btn-ghost" data-action="copy-last" data-i="${i}">Use last time's sets</button>` : ""}
-      <button class="btn btn-ghost" data-action="chart-ex" data-name="${esc(ex.name)}">View progress</button></div></section>`;
+      <button class="btn btn-ghost" data-action="chart-ex" data-name="${esc(ex.name)}">View progress</button></div>
+      <div class="notes">
+        <div class="notes-h"><label class="hd" for="n-${ex.id}">Notes</label>
+          ${pastCount ? `<button class="linkbtn" data-action="past-notes" data-name="${esc(ex.name)}">Past notes · ${pastCount}</button>` : ""}</div>
+        <textarea id="n-${ex.id}" data-note="${i}" rows="2" placeholder="Form cues, how it felt, what to change next time">${esc(ex.note || "")}</textarea>
+      </div></section>`;
   });
   h += `<button class="btn btn-dashed" data-action="picker">+ Add exercise</button>
     <div class="saveline" id="saveline">${dirty.size ? "Saving…" : "All changes saved"}</div>
@@ -557,6 +571,29 @@ function drawChart() {
   svg.addEventListener("pointerleave", hide);
 }
 
+/* ---------- notes ---------- */
+// notes written for this exercise on dates before `beforeId`, newest first
+function pastNotes(name, beforeId) {
+  const k = key(name), out = [];
+  for (const id of sortedIds()) {
+    if (beforeId && id >= beforeId) continue;
+    const ex = (days[id].exercises || []).find(e => key(e.name) === k && (e.note || "").trim());
+    if (ex) out.push({ date: id, note: ex.note.trim(), sets: ex.sets });
+  }
+  return out;
+}
+function viewNotes() {
+  const list = pastNotes(ui.notesFor, ui.view === "day" ? ui.dayId : null);
+  return `<div class="scrim" data-action="close-notes"><div class="sheet" role="dialog" aria-label="Past notes for ${esc(ui.notesFor)}">
+    <div class="sheet-h"><h2>${esc(ui.notesFor)} notes</h2><button class="icon-btn" data-action="close-notes" aria-label="Close">${xIcon}</button></div>
+    <div class="scroll">${list.length ? `<div class="list">${list.map(p => `<div class="row pn"><div class="main">
+      <div class="t">${esc(shortDate(p.date))} <span class="s" style="font-weight:400">· ${esc(rel(p.date))}</span></div>
+      <div class="pn-note">${esc(p.note)}</div>
+      ${summary(p.sets) ? `<div class="s num">${esc(summary(p.sets))}</div>` : ""}</div></div>`).join("")}</div>`
+      : `<div class="note">No earlier notes for this exercise.</div>`}</div></div></div>`;
+}
+function autosize(el) { el.style.height = "auto"; el.style.height = Math.max(60, el.scrollHeight + 2) + "px"; }
+
 /* ---------- render ---------- */
 function render() {
   renderTop();
@@ -564,12 +601,13 @@ function render() {
   if (ui.view === "day") app.innerHTML = viewDay();
   else if (ui.view === "progress") app.innerHTML = viewProgress();
   else app.innerHTML = viewHome();
-  $("#overlay").innerHTML = ui.picker ? viewPicker() : "";
+  $("#overlay").innerHTML = ui.picker ? viewPicker() : ui.notesFor ? viewNotes() : "";
   if (ui.view === "progress") drawChart();
+  if (ui.view === "day") document.querySelectorAll("textarea[data-note]").forEach(autosize);
 }
 function softRender() {
   const a = document.activeElement;
-  if (a && a.tagName === "INPUT" && (a.closest("#app") || a.closest("#overlay"))) return;  // don't yank focus mid-typing
+  if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA") && (a.closest("#app") || a.closest("#overlay"))) return;  // don't yank focus mid-typing
   render();
 }
 function renderPickList() {
@@ -602,12 +640,14 @@ document.addEventListener("click", async ev => {
   const a = t.dataset.action, d = days[ui.dayId];
   if (a !== "del-ex" && a !== "del-day") ui.armed = null;
   switch (a) {
-    case "tab": ui.view = t.dataset.tab; ui.picker = false; render(); window.scrollTo(0, 0); break;
+    case "tab": ui.view = t.dataset.tab; ui.picker = false; ui.notesFor = null; render(); window.scrollTo(0, 0); break;
     case "unit": unit = t.dataset.u; try { localStorage.setItem("liftlog.unit", unit); } catch (e) {} render(); break;
     case "open-day": openDay(t.dataset.id); break;
     case "open-other": { const v = $("#otherDate").value; if (/^\d{4}-\d{2}-\d{2}$/.test(v)) openDay(v); else toast("Pick a date first."); break; }
     case "picker": ui.picker = true; ui.q = ""; render(); break;
     case "close-picker": ui.picker = false; render(); break;
+    case "past-notes": ui.notesFor = t.dataset.name; render(); break;
+    case "close-notes": ui.notesFor = null; render(); break;
     case "add-ex": addExercise(t.dataset.name); break;
     case "add-set": case "add-er": {
       const type = a === "add-er" ? "er" : "reg", ex = d.exercises[+t.dataset.i], mine = ofType(ex.sets, type);
@@ -661,6 +701,11 @@ document.addEventListener("click", async ev => {
 document.addEventListener("input", ev => {
   const el = ev.target;
   if (el.id === "exSearch") { ui.q = el.value; renderPickList(); return; }
+  if (el.dataset.note !== undefined && ui.view === "day") {
+    const d = days[ui.dayId]; if (!d) return;
+    d.exercises[+el.dataset.note].note = el.value;
+    autosize(el); touch(ui.dayId); return;
+  }
   if (el.dataset.f && ui.view === "day") {
     const d = days[ui.dayId]; if (!d) return;
     const s = d.exercises[+el.dataset.i].sets[+el.dataset.j];
@@ -705,7 +750,7 @@ function parseCsv(text) {
   if (cell || row.length) { row.push(cell); rows.push(row); }
   const head = (rows.shift() || []).map(h => h.trim().toLowerCase());
   const col = name => head.indexOf(name);
-  const ci = { date: col("date"), cat: col("category"), ex: col("exercise"), set: col("set"), type: col("set_type"), w: col("weight"), u: col("unit"), r: col("reps") };
+  const ci = { date: col("date"), cat: col("category"), ex: col("exercise"), set: col("set"), type: col("set_type"), w: col("weight"), u: col("unit"), r: col("reps"), note: col("notes") };
   if (ci.date < 0 || ci.ex < 0) throw new Error("not a Lift Log CSV");
   const out = {};
   for (const r of rows) {
@@ -715,6 +760,10 @@ function parseCsv(text) {
     if (ci.cat >= 0 && r[ci.cat] && r[ci.cat].trim()) d.category = r[ci.cat].trim();
     let ex = d.exercises.find(e => key(e.name) === key(name));
     if (!ex) d.exercises.push(ex = { id: uid(), name, sets: [] });
+    const noteCell = ci.note >= 0 ? (r[ci.note] || "").trim() : "";
+    if (noteCell) ex.note = ex.note ? ex.note + "\n" + noteCell : noteCell;
+    const cell = c => c >= 0 ? (r[c] || "").trim() : "";
+    if (!cell(ci.set) && !cell(ci.w) && !cell(ci.r)) continue;   // a notes-only row
     const u = ci.u >= 0 ? (r[ci.u] || "").trim().toLowerCase() : "";
     const set = { weight: n((r[ci.w] || "").trim()), unit: /^kgs?$/.test(u) ? "kg" : /^(lbs?|pounds?)$/.test(u) ? "lb" : unit, reps: n((r[ci.r] || "").trim()) };
     if (ci.type >= 0 && /^er$/i.test((r[ci.type] || "").trim())) set.type = "er";
@@ -723,7 +772,7 @@ function parseCsv(text) {
   return out;
 }
 document.addEventListener("keydown", ev => {
-  if (ev.key === "Escape" && ui.picker) { ui.picker = false; render(); }
+  if (ev.key === "Escape" && (ui.picker || ui.notesFor)) { ui.picker = false; ui.notesFor = null; render(); }
   if (ev.key === "Enter" && ev.target.id === "exSearch") {
     const first = document.querySelector("#pickList [data-action=add-ex]"); if (first) addExercise(first.dataset.name);
   }
@@ -731,10 +780,14 @@ document.addEventListener("keydown", ev => {
 window.addEventListener("resize", () => { if (ui.view === "progress") drawChart(); });
 
 async function exportCsv() {
-  const rows = [["date","category","exercise","set","set_type","weight","unit","reps"]];
-  for (const id of Object.keys(days).sort()) for (const e of days[id].exercises || [])
-    e.sets.forEach((s, j) => rows.push([id, days[id].category || "", e.name, j + 1, TYPES[typeOf(s)], s.weight ?? "", unitOf(s), s.reps ?? ""]));
-  const csv = rows.map(r => r.map(v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(",")).join("\n");
+  const rows = [["date","category","exercise","set","set_type","weight","unit","reps","notes"]];
+  for (const id of Object.keys(days).sort()) for (const e of days[id].exercises || []) {
+    const note = (e.note || "").trim(), cat = days[id].category || "";
+    // the exercise's note rides on its first set row (or a row of its own when there are no sets)
+    if (!e.sets.length) { if (note) rows.push([id, cat, e.name, "", "", "", "", "", note]); continue; }
+    e.sets.forEach((s, j) => rows.push([id, cat, e.name, j + 1, TYPES[typeOf(s)], s.weight ?? "", unitOf(s), s.reps ?? "", j === 0 ? note : ""]));
+  }
+  const csv = rows.map(r => r.map(v => /[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(",")).join("\n");
   const name = `lift-log-${todayId()}.csv`, file = new File([csv], name, { type: "text/csv" });
   const done = () => { try { localStorage.setItem("liftlog.lastExport", String(Date.now())); } catch (e) {} render(); };
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
