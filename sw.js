@@ -1,6 +1,6 @@
 // Lift Log service worker: keeps the app working with no internet connection.
-// When you change any app file, bump VERSION so phones pick up the new copy.
-const VERSION = "lift-log-v4";
+// When you change any app file, bump VERSION here AND APP_VERSION in index.html.
+const VERSION = "lift-log-v5";
 const SHELL = [
   "./",
   "./index.html",
@@ -10,9 +10,15 @@ const SHELL = [
   "./icons/icon-512.png",
 ];
 const FONTS = "lift-log-fonts";
+const PAGE_TIMEOUT_MS = 3000;   // weak gym signal: fall back to the saved copy after this long
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: "reload" skips the browser's own HTTP cache, so a new version never saves an old file
+  event.waitUntil(
+    caches.open(VERSION)
+      .then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", event => {
@@ -39,12 +45,27 @@ self.addEventListener("fetch", event => {
   }
   if (url.origin !== self.location.origin) return;
 
-  // App files: cached copy first (instant, works offline), then update the cache from the network
+  // The app page: newest copy from the internet when online, saved copy when offline or slow
+  if (req.mode === "navigate") {
+    event.respondWith((async () => {
+      const cache = await caches.open(VERSION);
+      try {
+        const res = await Promise.race([
+          fetch(url.origin + url.pathname, { cache: "no-cache" }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), PAGE_TIMEOUT_MS)),
+        ]);
+        if (res.ok) { cache.put("./index.html", res.clone()); return res; }
+      } catch (e) { /* offline or too slow */ }
+      return (await cache.match("./index.html")) || fetch(req);
+    })());
+    return;
+  }
+
+  // Icons and other files: saved copy first, refreshed in the background
   event.respondWith(caches.open(VERSION).then(async cache => {
-    const isPage = req.mode === "navigate";
-    const hit = await cache.match(isPage ? "./index.html" : req, { ignoreSearch: true });
-    const net = fetch(req).then(res => {
-      if (res.ok) cache.put(isPage ? "./index.html" : req, res.clone());
+    const hit = await cache.match(req, { ignoreSearch: true });
+    const net = fetch(url.href, { cache: "no-cache" }).then(res => {
+      if (res.ok) cache.put(req, res.clone());
       return res;
     }).catch(() => hit);
     return hit || net;

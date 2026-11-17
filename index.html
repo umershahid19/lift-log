@@ -211,6 +211,7 @@ const ui = { view: "home", dayId: null, ex: null, metric: "e1rm", loaded: false,
 let unit = "lb";
 try { unit = localStorage.getItem("liftlog.unit") || "lb"; } catch (e) {}
 
+const APP_VERSION = 5;   // keep in step with VERSION in sw.js
 const STARTER = ["Back Squat","Bench Press","Deadlift","Overhead Press","Barbell Row","Pull-up","Chin-up","Romanian Deadlift",
   "Incline Dumbbell Press","Dumbbell Shoulder Press","Lat Pulldown","Seated Cable Row","Leg Press","Bulgarian Split Squat",
   "Hip Thrust","Leg Curl","Leg Extension","Calf Raise","Bicep Curl","Hammer Curl","Tricep Pushdown","Skull Crusher",
@@ -389,7 +390,8 @@ function viewHome() {
   }
   h += `<div class="foot">${ids.length ? `<button class="btn btn-ghost" data-action="export">Back up (export CSV)</button>` : ""}
     <label class="btn btn-ghost" for="importFile" tabindex="0">Import CSV</label>
-    <input type="file" id="importFile" accept=".csv,text/csv,text/plain" hidden></div>${backupNote(ids)}`;
+    <input type="file" id="importFile" accept=".csv,text/csv,text/plain" hidden></div>${backupNote(ids)}
+    <div class="note" style="text-align:center;opacity:.7">Lift Log version ${APP_VERSION}</div>`;
   return st + h;
 }
 
