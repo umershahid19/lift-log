@@ -1,6 +1,6 @@
 // Lift Log service worker: keeps the app working with no internet connection.
 // When you change any app file, bump VERSION here AND APP_VERSION in index.html.
-const VERSION = "lift-log-v5";
+const VERSION = "lift-log-v6";
 const SHELL = [
   "./",
   "./index.html",
